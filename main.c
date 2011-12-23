@@ -4,9 +4,23 @@
 #include <avr/wdt.h>
 #include <avr/eeprom.h>
 #include <avr/pgmspace.h>
+#include <string.h>
 
 #include "usbdrv/usbdrv.h"
 #include "usbdrv/oddebug.h"
+
+PROGMEM char usbHidReportDescriptor[22] = {    /* USB report descriptor */
+    0x06, 0x00, 0xff,              // USAGE_PAGE (Generic Desktop)
+    0x09, 0x01,                    // USAGE (Vendor Usage 1)
+    0xa1, 0x01,                    // COLLECTION (Application)
+    0x15, 0x00,                    //   LOGICAL_MINIMUM (0)
+    0x26, 0xff, 0x00,              //   LOGICAL_MAXIMUM (255)
+    0x75, 0x08,                    //   REPORT_SIZE (8)
+    0x95, 0x14,                    //   REPORT_COUNT (20)
+    0x09, 0x00,                    //   USAGE (Undefined)
+    0xb2, 0x02, 0x01,              //   FEATURE (Data,Var,Abs,Buf)
+    0xc0                           // END_COLLECTION
+};
 
 #define __LATCH_LOW PORTB &= ~(1 << PB0)
 #define __LATCH_HIGH PORTB |= (1 << PB0)
@@ -14,80 +28,93 @@
 void setup(void);
 uint8_t spi_transfer(uint8_t data);
 int main(void);
-//uchar usbFunctionRead(uchar *data, uchar len);
-//uchar usbFunctionWrite(uchar *data, uchar len);
-//usbMsgLen_t usbFunctionSetup(uchar data[8]);
+
+uchar usbFunctionRead(uchar *data, uchar len);
+uchar usbFunctionWrite(uchar *data, uchar len);
+usbMsgLen_t usbFunctionSetup(uchar data[8]);
 void    usbEventResetReady(void);
 
+/* The following variables store the status of the current data transfer */
+static uchar    currentAddress;
+static uchar    bytesRemaining;
+
+//framebuffer
+volatile uchar buffer[21]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+volatile uint8_t currentbuffer=0;
+
+// What layer the interrupt routine is currently showing.
+volatile uchar current_layer=0;
 
 
-void setup(void) {
 
-  // USI stuff
-  DDRB |= _BV(PB1); // as output (DO)
-  DDRB |= _BV(PB2); // as output (USISCK)
-  DDRB |= _BV(PB0); // as output (DI)
+static void initTimers(){
+	//enable interrupt TimerCounter0 compare match A
+	TIMSK = _BV(OCIE0A);
 
-//  //USB Stuff
-//  uchar   i;
-//  uchar   calibrationValue;
-//
-//  calibrationValue = eeprom_read_byte(0); /* calibration value from last time */
-//  if(calibrationValue != 0xff){
-//      OSCCAL = calibrationValue;
-//  }
-//  odDebugInit();
-//  usbDeviceDisconnect();
-//  for(i=0;i<20;i++){  /* 300 ms disconnect */
-//      _delay_ms(15);
-//  }
-//  usbDeviceConnect();
-//
-//  wdt_enable(WDTO_1S);
-//
-//  usbInit();
-  sei();
+	//setting CTC
+	TCCR0A = _BV(WGM01);
+
+	//Timer0 Settings: Timer Prescaler /1024,
+	TCCR0B = _BV(CS00) | _BV(CS02);
+
+	//top of the counters (1239hz)
+	OCR0A=0x1A;
+}
+
+
+//timer interrupt 0
+ISR(TIMER0_COMPA_vect)
+{
+
+	unsigned char layer = current_layer;
+	int shift = (4*layer);
+
+	__LATCH_LOW;
+	spi_transfer(buffer[3+shift]);
+	spi_transfer(buffer[2+shift]);
+	spi_transfer(buffer[1+shift]);
+	spi_transfer(buffer[0+shift]);
+	__LATCH_HIGH;
+
+	if (layer++ == 4){
+		layer=0;
+	}
+	current_layer=layer;
 
 }
 
-int main(void) {
-	setup();
-	for(;;) {
-        /*wdt_reset();
-        usbPoll();*/
+void setup(void) {
 
-  	  __LATCH_LOW;
-  	    spi_transfer(0x01); // channel 1 active (red)
-  	    spi_transfer(0x04); // channel 1 active (red)
-  	  __LATCH_HIGH;
-  	  _delay_ms(500);
+	// USI stuff
+	DDRB |= _BV(PB1); // as output (DO)
+	DDRB |= _BV(PB2); // as output (USISCK)
+	DDRB |= _BV(PB0); // as output (DI)
 
-  	  __LATCH_LOW;
-  	    spi_transfer(0x02); // channel 2 active (green)
-  	    spi_transfer(0x02); // channel 2 active (green)
-  	  __LATCH_HIGH;
-  	  _delay_ms(500);
+	// USB Stuff
+	uchar   i;
+	uchar   calibrationValue;
 
-  	  __LATCH_LOW;
-  	    spi_transfer(0x04); // channel 3 active (blue)
-  	    spi_transfer(0x01); // channel 3 active (blue)
-  	  __LATCH_HIGH;
-  	  _delay_ms(500);
-
-  	  __LATCH_LOW;
-  	    spi_transfer(0x07); // channels 1,2,3 active (white)
-  	    spi_transfer(0x07); // channels 1,2,3 active (white)
-  	  __LATCH_HIGH;
-  	  _delay_ms(500);
-
-
-  	  __LATCH_LOW;
-  	    spi_transfer(0x00); // all outputs off
-  	    spi_transfer(0x00); // all outputs off
-  	  __LATCH_HIGH;
-  	  _delay_ms(500);
-
+	calibrationValue = eeprom_read_byte(0); /* calibration value from last time */
+	if(calibrationValue != 0xff){
+		OSCCAL = calibrationValue;
 	}
+
+	wdt_enable(WDTO_1S);
+
+	odDebugInit();
+	DBG1(0x00, 0, 0);       // debug output: main starts
+	usbInit();
+	usbDeviceDisconnect();  // enforce re-enumeration, do this while interrupts are disabled!
+	i = 0;
+	while(--i){         /* fake USB disconnect for > 250 ms */
+		wdt_reset();
+		_delay_ms(1);
+	}
+	usbDeviceConnect();
+
+	//TIMERS
+	initTimers();
+	sei();
 
 }
 
@@ -100,34 +127,6 @@ uint8_t spi_transfer(uint8_t data) {
   }
   return USIDR;
 }
-
-//// ----------------------------------------------------------------------
-//// Handle an IN packet.
-//// ----------------------------------------------------------------------
-//uchar usbFunctionRead(uchar *data, uchar len)
-//{
-//	uchar	i;
-//	return len;
-//}
-//
-//// ----------------------------------------------------------------------
-//// Handle an OUT packet.
-//// ----------------------------------------------------------------------
-//uchar usbFunctionWrite(uchar *data, uchar len)
-//{
-//	uchar	i;
-//	unsigned	usec;
-//	uchar	r;
-//
-//	//return last;
-//	return 1;
-//}
-//
-//
-//usbMsgLen_t usbFunctionSetup(uchar data[8])
-//{
-//	return 0;
-//}
 
 /* ------------------------------------------------------------------------- */
 /* ------------------------ Oscillator Calibration ------------------------- */
@@ -189,5 +188,75 @@ void    usbEventResetReady(void)
 {
     calibrateOscillator();
     eeprom_write_byte(0, OSCCAL);   /* store the calibrated value in EEPROM */
+}
+
+/* usbFunctionWrite() is called when the host sends a chunk of data to the
+ * device. For more information see the documentation in usbdrv/usbdrv.h.
+ */
+uchar   usbFunctionWrite(uchar *data, uchar len)
+{
+	if(bytesRemaining == 0){
+		currentbuffer^=1;//toggle
+		return 1;               /* end of transfer */
+	}
+
+	if(len > bytesRemaining)
+		len = bytesRemaining;
+	memcpy(buffer+currentAddress,data,len);
+	currentAddress += len;
+	bytesRemaining -= len;
+
+	if (bytesRemaining == 0){
+		currentbuffer^=1;//toggle
+		return 1;               /* end of transfer */
+	}
+	return 0; /* return 1 if this was the last chunk */
+}
+
+/* usbFunctionRead() is called when the host requests a chunk of data from
+ * the device. For more information see the documentation in usbdrv/usbdrv.h.
+ */
+uchar   usbFunctionRead(uchar *data, uchar len)
+{
+    if(len > bytesRemaining)
+        len = bytesRemaining;
+    memcpy(data,buffer+currentAddress,len);
+    currentAddress += len;
+    bytesRemaining -= len;
+    return len;
+}
+
+
+usbMsgLen_t usbFunctionSetup(uchar data[8])
+{
+usbRequest_t    *rq = (void *)data;
+
+    if((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS){    /* HID class request */
+        if(rq->bRequest == USBRQ_HID_GET_REPORT){  /* wValue: ReportType (highbyte), ReportID (lowbyte) */
+            /* since we have only one report type, we can ignore the report-ID */
+            bytesRemaining = 20;
+            currentAddress = 0;
+            return USB_NO_MSG;  /* use usbFunctionRead() to obtain data */
+        }else if(rq->bRequest == USBRQ_HID_SET_REPORT){
+            /* since we have only one report type, we can ignore the report-ID */
+            bytesRemaining = 20;
+            currentAddress = 0;
+            return USB_NO_MSG;  /* use usbFunctionWrite() to receive data from host */
+        }
+    }else{
+        /* ignore vendor type requests, we don't use any */
+    }
+    return 0;
+}
+
+int __attribute__((noreturn)) main(void){
+
+	setup();
+
+    DBG1(0x01, 0, 0);       // debug output: main loop starts
+    for(;;){    /* main event loop */
+    	wdt_reset();
+        usbPoll();
+    }
 }
 
