@@ -39,11 +39,12 @@ static uchar    currentAddress;
 static uchar    bytesRemaining;
 
 //framebuffer
-volatile uchar buffer[21]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+uchar buffer[21]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 volatile uint8_t currentbuffer=0;
 
 // What layer the interrupt routine is currently showing.
-volatile uchar current_layer=0;
+uchar current_layer=0;
+volatile uchar draw = 0 ;
 
 
 
@@ -58,29 +59,29 @@ static void initTimers(){
 	TCCR0B = _BV(CS00) | _BV(CS02);
 
 	//top of the counters (1239hz)
-	OCR0A=0x1A;
+	OCR0A=0x0C;
 }
 
 
 //timer interrupt 0
+inline void drawLayer()
+{
+    int shift = (4 * current_layer);
+    __LATCH_LOW;
+    spi_transfer(buffer[3 + shift]);
+    spi_transfer(buffer[2 + shift]);
+    spi_transfer(buffer[1 + shift]);
+    spi_transfer(buffer[0 + shift]);
+    __LATCH_HIGH;
+    if(current_layer++ == 4){
+    	current_layer = 0;
+    }
+    draw=0;
+}
+
 ISR(TIMER0_COMPA_vect)
 {
-
-	unsigned char layer = current_layer;
-	int shift = (4*layer);
-
-	__LATCH_LOW;
-	spi_transfer(buffer[3+shift]);
-	spi_transfer(buffer[2+shift]);
-	spi_transfer(buffer[1+shift]);
-	spi_transfer(buffer[0+shift]);
-	__LATCH_HIGH;
-
-	if (layer++ == 4){
-		layer=0;
-	}
-	current_layer=layer;
-
+    draw=1;
 }
 
 void setup(void) {
@@ -253,10 +254,12 @@ int __attribute__((noreturn)) main(void){
 
 	setup();
 
-    DBG1(0x01, 0, 0);       // debug output: main loop starts
-    for(;;){    /* main event loop */
-    	wdt_reset();
-        usbPoll();
-    }
+	DBG1(0x01, 0, 0);       // debug output: main loop starts
+	for(;;){    /* main event loop */
+		wdt_reset();
+		usbPoll();
+		if (draw)
+			drawLayer();
+	}
 }
 
