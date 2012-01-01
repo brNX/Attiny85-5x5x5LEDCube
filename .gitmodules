@@ -1,0 +1,3 @@
+[submodule "LedCube-client"]
+	path = LedCube-client
+	url = git@github.com:brNX/LedCube-client.git

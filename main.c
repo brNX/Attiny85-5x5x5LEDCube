@@ -40,7 +40,6 @@ static uchar    bytesRemaining;
 
 //framebuffer
 uchar buffer[21]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-volatile uint8_t currentbuffer=0;
 
 // What layer the interrupt routine is currently showing.
 uchar current_layer=0;
@@ -197,7 +196,6 @@ void    usbEventResetReady(void)
 uchar   usbFunctionWrite(uchar *data, uchar len)
 {
 	if(bytesRemaining == 0){
-		currentbuffer^=1;//toggle
 		return 1;               /* end of transfer */
 	}
 
@@ -208,7 +206,6 @@ uchar   usbFunctionWrite(uchar *data, uchar len)
 	bytesRemaining -= len;
 
 	if (bytesRemaining == 0){
-		currentbuffer^=1;//toggle
 		return 1;               /* end of transfer */
 	}
 	return 0; /* return 1 if this was the last chunk */
