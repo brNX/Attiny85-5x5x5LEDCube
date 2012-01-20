@@ -9,7 +9,7 @@
 #include "usbdrv/usbdrv.h"
 #include "usbdrv/oddebug.h"
 
-PROGMEM char usbHidReportDescriptor[22] = {    /* USB report descriptor */
+const PROGMEM char usbHidReportDescriptor[22] = {    /* USB report descriptor */
     0x06, 0x00, 0xff,              // USAGE_PAGE (Generic Desktop)
     0x09, 0x01,                    // USAGE (Vendor Usage 1)
     0xa1, 0x01,                    // COLLECTION (Application)
@@ -26,7 +26,7 @@ PROGMEM char usbHidReportDescriptor[22] = {    /* USB report descriptor */
 #define __LATCH_HIGH PORTB |= (1 << PB0)
 
 void setup(void);
-uint8_t spi_transfer(uint8_t data);
+static uint8_t spi_transfer_fast(uint8_t data);
 int main(void);
 
 uchar usbFunctionRead(uchar *data, uchar len);
@@ -63,14 +63,14 @@ static void initTimers(){
 
 
 //timer interrupt 0
-inline void drawLayer()
+inline static void drawLayer()
 {
     int shift = (4 * current_layer);
     __LATCH_LOW;
-    spi_transfer(buffer[3 + shift]);
-    spi_transfer(buffer[2 + shift]);
-    spi_transfer(buffer[1 + shift]);
-    spi_transfer(buffer[0 + shift]);
+    spi_transfer_fast(buffer[3 + shift]);
+    spi_transfer_fast(buffer[2 + shift]);
+    spi_transfer_fast(buffer[1 + shift]);
+    spi_transfer_fast(buffer[0 + shift]);
     __LATCH_HIGH;
     if(current_layer++ == 4){
     	current_layer = 0;
@@ -118,13 +118,38 @@ void setup(void) {
 
 }
 
-uint8_t spi_transfer(uint8_t data) {
+inline static uint8_t spi_transfer_fast(uint8_t data) {
+  // definitions for clock toggling
+  #define   R16 ((1<<USIWM0)|(0<<USICS0)|(1<<USITC))
+  #define   R17 ((1<<USIWM0)|(0<<USICS0)|(1<<USITC)|(1<<USICLK))
+
   USIDR = data;
   USISR = _BV(USIOIF); // clear flag
 
-  while ( (USISR & _BV(USIOIF)) == 0 ) {
-   USICR = (1<<USIWM0)|(1<<USICS1)|(1<<USICLK)|(1<<USITC);
-  }
+  USICR = R16;
+  USICR = R17;
+
+  USICR = R16;
+  USICR = R17;
+
+  USICR = R16;
+  USICR = R17;
+
+  USICR = R16;
+  USICR = R17;
+
+  USICR = R16;
+  USICR = R17;
+
+  USICR = R16;
+  USICR = R17;
+
+  USICR = R16;
+  USICR = R17;
+
+  USICR = R16;
+  USICR = R17;
+
   return USIDR;
 }
 
