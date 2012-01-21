@@ -17,64 +17,42 @@ const PROGMEM char usbHidReportDescriptor[22] = {    /* USB report descriptor */
 		0x15, 0x00,                    //   LOGICAL_MINIMUM (0)
 		0x26, 0xff, 0x00,              //   LOGICAL_MAXIMUM (255)
 		0x75, 0x08,                    //   REPORT_SIZE (8)
-		0x95, 0x7D,                    //   REPORT_COUNT (125)
+		0x95, 0x3F,                    //   REPORT_COUNT (125)
 		0x09, 0x00,                    //   USAGE (Undefined)
 		0xb2, 0x02, 0x01,              //   FEATURE (Data,Var,Abs,Buf)
 		0xc0                           // END_COLLECTION
 };
 
-uchar pwm_table[4][16][5];
 
 #define __LATCH_LOW PORTB &= ~(1 << PB0)
 #define __LATCH_HIGH PORTB |= (1 << PB0)
+#define BUFFERSIZE 125
+#define PWM_DEFAULT 0
 
-void setup(void);
+static void setup(void);
 static uint8_t spi_transfer_fast(uint8_t data);
 int main(void);
-void updatePwmtable();
+static void updatePwmtable();
 
-uchar usbFunctionRead(uchar *data, uchar len);
 uchar usbFunctionWrite(uchar *data, uchar len);
 usbMsgLen_t usbFunctionSetup(uchar data[8]);
 void    usbEventResetReady(void);
-
-
 /* The following variables store the status of the current data transfer */
 static uchar    currentAddress;
 static uchar    bytesRemaining;
-uchar changepwmtable=0;
-
 
 
 //framebuffer
-uchar buffer[126];
-//uchar tempbuffer[126];
+uchar buffer[BUFFERSIZE+1];
+uchar pwm_table[4][8][5];
+uchar changepwmtable=0;
 
 //pwm counters
 uint8_t softcount;
-#define PWM_DEFAULT 7
-
 // What layer the interrupt routine is currently showing.
 uchar current_layer=0;
 
 
-
-/*static void initTimers(){
-	//enable interrupt TimerCounter0 compare match A
-	TIMSK = _BV(OCIE0A);
-
-	//setting CTC
-	TCCR0A = _BV(WGM01);
-
-	//Timer0 Settings: Timer Prescaler /1024,
-	TCCR0B = _BV(CS00) | _BV(CS02);
-
-	//top of the counters (1239hz)
-	OCR0A=0x0C;
-}*/
-
-
-//timer interrupt 0
 inline static void drawLayer()
 {
 
@@ -89,19 +67,18 @@ inline static void drawLayer()
 	if(current_layer++ == 4){
 		current_layer = 0;
 
-		if (softcount++== 15)
+		if (softcount++== 7)
 			softcount=0;
 
 	}
-	//draw=0;
 }
 
 
-void updatePwmtable(){
+inline static void updatePwmtable(){
 
 	for(int layer=0;layer<5;layer++){
 
-		for (int table_value=0;table_value<16;table_value++ ){
+		for (int table_value=0;table_value<8;table_value++ ){
 
 			int offset = layer*25;
 
@@ -200,24 +177,16 @@ void updatePwmtable(){
 	}
 
 	changepwmtable=0;
-}
+ }
 
-/*ISR(TIMER0_COMPA_vect)
-{
-	draw=1;
-}*/
-
-void setup(void) {
+inline static void setup(void) {
 
 	//PWM stuff
 	memset(buffer,PWM_DEFAULT,sizeof(buffer));
 	memset(pwm_table,0,sizeof(pwm_table));
-	//memset(tempbuffer,PWM_DEFAULT,sizeof(tempbuffer));
-	//memset(softcount,0xFF,sizeof(softcount));
 
 	softcount=0;
 	changepwmtable=1;
-
 
 	// USI stuff
 	DDRB |= _BV(PB1); // as output (DO)
@@ -246,8 +215,6 @@ void setup(void) {
 	}
 	usbDeviceConnect();
 
-	//TIMERS
-	//initTimers();
 	sei();
 
 }
@@ -394,12 +361,12 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 	if((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS){    /* HID class request */
 		if(rq->bRequest == USBRQ_HID_GET_REPORT){  /* wValue: ReportType (highbyte), ReportID (lowbyte) */
 			/* since we have only one report type, we can ignore the report-ID */
-			bytesRemaining = 125;
+			bytesRemaining = BUFFERSIZE;
 			currentAddress = 0;
 			return USB_NO_MSG;  /* use usbFunctionRead() to obtain data */
 		}else if(rq->bRequest == USBRQ_HID_SET_REPORT){
 			/* since we have only one report type, we can ignore the report-ID */
-			bytesRemaining = 125;
+			bytesRemaining = BUFFERSIZE;
 			currentAddress = 0;
 			return USB_NO_MSG;  /* use usbFunctionWrite() to receive data from host */
 		}
@@ -413,14 +380,20 @@ int __attribute__((noreturn)) main(void){
 
 	setup();
 
+
+	for(int i=0;i<100;i++){
+		wdt_reset();
+		usbPoll();
+	}
+
 	//DBG1(0x01, 0, 0);       // debug output: main loop starts
 	for(;;){    /* main event loop */
 		wdt_reset();
-		/*usbPoll();*/
+		usbPoll();
 		if (changepwmtable)
 			updatePwmtable();
-		//if (draw)*/
-		drawLayer();
+
+	    drawLayer();
 
 	}
 }
